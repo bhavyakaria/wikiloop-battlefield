@@ -13,7 +13,7 @@
 // limitations under the License.
 
 const pkg = require('./package');
-const locales = require('./locales/locales');
+const locales = require('./i18n/getlocales');
 require(`dotenv`).config();
 
 console.log(`=================================`);
@@ -35,7 +35,7 @@ module.exports = {
     link: [
       { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
       { rel: 'stylesheet', href: 'https://www.mediawiki.org/w/load.php?modules=mediawiki.legacy.shared|mediawiki.diff.styles&only=styles' },
-      { rel: 'stylesheet', href: 'https://use.fontawesome.com/releases/v5.13.0/css/all.css', crossorigin: 'anonymouse' }
+      { rel: 'stylesheet', href: 'https://use.fontawesome.com/releases/v5.13.0/css/all.css', crossorigin: 'anonymous' }
     ],
     script: [
       {
@@ -84,24 +84,14 @@ module.exports = {
         'HOST',
         'PORT',
         'GA_WLBF_ID_CLIENT',
-        'MIXER_RAMP_UP_PERCENT'
+        'MIXER_RAMP_UP_PERCENT',
+        'CROSS_EDIT_CHECK',
       ]
     }],
     [
       'nuxt-i18n',
       {
-        locales: [
-          'af',
-          'de',
-          'en',
-          'fr',
-          'id',
-          'lv',
-          'pl',
-          'ru',
-          'tr',
-          'zh',
-        ],
+        locales: Object.keys(locales),
         defaultLocale: 'en',
         vueI18n: {
           fallbackLocale: 'en',
@@ -130,9 +120,18 @@ module.exports = {
    ** Build configuration
    */
   build: {
-    vendor: ['socket.io-client']
+    vendor: ['socket.io-client'],
+    babel: {
+      presets({ isServer }) {
+        return [
+          [
+            "@nuxt/babel-preset-app", { loose: true }
+          ]
+        ]
+      }
+    }
   },
-  buildModules: ['@nuxt/typescript-build']
+  buildModules: ['@nuxt/typescript-build'],
 };
 
 console.log(`nuxt.config.js is done executed!`);

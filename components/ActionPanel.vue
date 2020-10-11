@@ -1,6 +1,3 @@
-import {WikiActionType} from "~/shared/interfaces";
-import {WikiActionType} from "~/shared/interfaces";
-import {WikiActionType} from "~/shared/interfaces";
 <template>
   <section>
     <div class="card-body">
@@ -10,17 +7,17 @@ import {WikiActionType} from "~/shared/interfaces";
             <button
               v-on:click="interactionBtn(`LooksGood`)"
               class="btn btn-sm btn-outline-success"
-            >{{$t(`LooksGoodBtnLabel`)}} (g)
+            >{{$t(`Label-LooksGood`)}} (g)
             </button>
             <button
               v-on:click="interactionBtn(`NotSure`)"
               class="btn btn-sm btn-outline-secondary">
-              {{$t(`NotSureBtnLabel`)}} (p)
+              {{$t(`Label-NotSure`)}} (p)
             </button>
             <button
               v-on:click="interactionBtn(`ShouldRevert`)"
               class="btn btn-sm btn-outline-danger" target="_blank"
-            >{{$t(`ShouldRevertBtnLabel`)}} (v)
+            >{{$t(`Label-ShouldRevert`)}} (v)
             </button>
           </div>
         </template>
@@ -32,7 +29,7 @@ import {WikiActionType} from "~/shared/interfaces";
             <button
               @click="undo()"
               class="btn btn-outline-secondary"
-            >{{$t(`UndoBtnLabel`)}}(←)
+            >{{$t(`Button-Undo`)}}(←)
             </button>
             <template v-if="enableRevert">
               <button
@@ -40,52 +37,55 @@ import {WikiActionType} from "~/shared/interfaces";
                   class="btn btn-outline-primary"
                   @click="performRevert()"
                   >
-                <span>{{$t(`RevertNowBtnLabel`)}} (r)</span>
+                <span>{{$t(`Button-RevertNow`)}} (r)</span>
               </button>
               <button
                   v-else-if="wikiActionProps.type == `RedirectRevert`"
-                  class="btn btn-success">{{$t(`OpenedUrlToRevertBtnLabel`)}}</button>
+                  class="btn btn-success">{{$t(`Button-OpenedUrlToRevert`)}}</button>
               <button
                 v-else-if="wikiActionProps.type == `RedirectToHistory`"
-                class="btn btn-success">{{$t(`OpenedUrlToRevertBtnLabel`)}}</button>
+                class="btn btn-success">{{$t(`Button-OpenedUrlToRevert`)}}</button>
               <button
                 v-else-if="wikiActionProps.type == `DirectRevert` && wikiActionProps._meta && !(wikiActionProps._meta.hasError)"
-                class="btn btn-success">{{$t(`DirectRevertedBtnLabel`)}}
+                class="btn btn-success">{{$t(`Label-DirectReverted`)}}
               </button>
               <button
                 v-else-if="wikiActionProps.type == `DirectRevert` && wikiActionProps._meta && wikiActionProps._meta.hasError"
-                class="btn btn-danger">{{$t(`DirectRevertFailedBtnLabel`)}}
+                class="btn btn-danger">{{$t(`Label-DirectRevertFailed`)}}
               </button>
             </template>
-            <button
+            <button v-if="feed!=`direct-revision`"
               @click="$emit(`next-card`)"
               class="btn btn-success"
-            >{{$t(`NextBtnLabel`)}}(→)
+            >{{$t(`Button-Next`)}}(→)
             </button>
           </div>
         </template>
       </div>
+
+
       <template v-if="wikiActionProps && wikiActionProps.type ==`DirectRevert`">
-        <h5>Result</h5>
+        <h5>{{$t('Label-Result')}}</h5>
         <template v-if="wikiActionProps.resultRevId">
-          <i class="text-success fas fa-check-circle mr-1"></i><span>The
-          revision <a :href="`${getDiffLinkByRevId(revId)}`">{{revId}}</a>
-          is successfully reverted as
-          <a :href="`${getDiffLinkByRevId(wikiActionProps.resultRevId)}`">{{wikiActionProps.resultRevId}}</a>.
+          <i class="text-success fas fa-check-circle mr-1"></i><span>
+            <span v-html="$t('Message-TheRevisionIsSuccessfullyRevertedAs',
+            [
+              `<a href='${getDiffLinkByRevId(revId)}'>${revId}</a>`,
+              `<a href='${getDiffLinkByRevId(wikiActionProps.resultRevId)}'>${wikiActionProps.resultRevId}</a>`
+            ])"></span>
           </span>
         </template>
         <template v-else-if="wikiActionProps && wikiActionProps._meta && wikiActionProps._meta.hasError">
-          <i class="text-danger fas fa-times-circle mr-1"></i>The
-          revision <a :href="`${getDiffLinkByRevId(revId)}`">{{revId}}</a>
-          is failed to be reverted
+          <i class="text-danger fas fa-times-circle mr-1"></i>
+          <span v-html="$t(`Message-SorryWeFailedToRevert`,[`<a href='${getDiffLinkByRevId(revId)}'>${revId}</a>`])"></span>
           <span v-if="wikiActionProps._meta.rawResult && wikiActionProps._meta.rawResult.error">
-            because <b>{{wikiActionProps._meta.rawResult.error.code}}</b>: {{wikiActionProps._meta.rawResult.error.info}}
+            {{$t('Label-Reason')}}(<b>{{wikiActionProps._meta.rawResult.error.code}}</b>) {{wikiActionProps._meta.rawResult.error.info}}
           </span>
           <span v-else>.</span>
         </template>
       </template>
       <div v-if="isPending" class="spinner-border" role="status">
-        <span class="sr-only">Loading...</span>
+        <span class="sr-only">{{$t('Label-Loading')}}...</span>
       </div>
     </div>
   </section>
@@ -166,6 +166,7 @@ import {WikiActionType} from "~/shared/interfaces";
             document.dispatchEvent(new Event("stats-update"));
             document.dispatchEvent(new Event("judgement-event"));
             this.$emit('judgement-event', postBody);
+
         }
         getDiffLinkByRevId(revId) {
           return `${getUrlBaseByWiki(this.wiki)}/wiki/Special:Diff/${revId}`;
@@ -174,11 +175,11 @@ import {WikiActionType} from "~/shared/interfaces";
             if (this.isRevIdCurrent) {
                 const version = await this.$axios.$get(`/api/version`);
                 let revertEditSummary = this.$t(
-                    `RevertEditSummary`,
+                    `Message-RevertEditSummary`,
                     [
-                        `[[:m:WikiLoop Battlefield]]`,
+                        `[[:m:WikiLoop DoubleCheck]]`,
                         `${version}`,
-                        `http://${this.$env.PUBLIC_HOST || "battlefield.wikiloop.org"}/revision/${this.wiki}/${this.revId}`
+                        `http://${this.$env.PUBLIC_HOST || "doublecheck.wikiloop.org"}/revision/${this.wiki}/${this.revId}`
                     ]);
                 this.wikiActionProps = <WikiActionProps> {
                     fromUserGaId: this.$cookiez.get('_ga'),

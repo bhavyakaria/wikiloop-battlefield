@@ -1,30 +1,41 @@
 <template>
     <section>
-        <h1 v-if="feedName"> Review Feed<sup class="text-warning">β</sup> {{feedName}} </h1>
+        <h1 v-if="feedName"> {{$t('Label-ReviewFeed')}}<sup class="text-warning">β</sup> {{feedName}} </h1>
         <template v-if="!loading">
-          <div v-if="currentRevisionPanelItem" class="card shadow h-100">
+          <div v-if="currentWikiRevId && revisionPanelItems[currentWikiRevId]" class="card shadow h-100">
             <RevisionPanel
               :key="currentWikiRevId"
-              :item="currentRevisionPanelItem"
-              :feed-name="currentFeedItem.feed"
+              :item="revisionPanelItems[currentWikiRevId]"
+              :feed-name="wikiRevIdfromFeeds[currentWikiRevId]"
             >
             </RevisionPanel>
+
             <ActionPanel ref="actionPanel"
               :key="`action-panel-${currentWikiRevId}`"
               :wikiRevId="currentWikiRevId"
-              :title="currentRevisionPanelItem.title"
-              :feed="currentFeedItem.feed"
+              :title="revisionPanelItems[currentWikiRevId].title"
+              :feed="wikiRevIdfromFeeds[currentWikiRevId]"
+              @judgement-event="$refs.judgementPanel && $refs.judgementPanel.refresh()"
               @next-card="showNext()"/>
+            <template v-if="currentWikiRevId && revisionPanelItems[currentWikiRevId]">
+              <button class="btn btn-outline-primary"
+                v-if="!showJudgementPanel"
+                @click="showJudgementPanel = !showJudgementPanel">{{$t('Button-ShowJudgements')}}</button>
+              <JudgementPanel v-else ref="judgementPanel" class="card-body" :wikiRevId="currentWikiRevId" />
+            </template>
           </div>
           <div v-else>
             <div class="card">
             <div class="card-body">
               <div class="card-body w-100 text-center">
-                <h5 m-5>Feed <div class="badge badge-success">{{currentFeedItem.feed}}</div> has no new Revisions,
-                  click next below.</h5>
-                <button @click="showNext()" class="m-5 btn btn-outline-success">
-                  {{$t(`NextBtnLabel`)}}(→)
+                <h5 m-5> <span v-html="$t('Message-FeedHasNoNewRevisionsClickNextBelow', [
+                  `<div class='badge badge-success'>${wikiRevIdfromFeeds[currentWikiRevId] || feedName}</div>`])"></span> </h5>
+                <button v-if="feedName==='mix'" @click="showNext()" class="m-5 btn btn-outline-success">
+                  {{$t(`Button-Next`)}}(→)
                 </button>
+                <a v-else class="btn btn-primary" href="/">
+                  {{$t('Label-Home')}}
+                </a>
               </div>
             </div>
             </div>
@@ -41,12 +52,11 @@
         </template>
 
         <b-modal id="modal-promote-login" title="Tip: Login">
-            Do you know you could Login and preserve your labels under your name?
-            We support Login with Wikipedia account through Oauth. <br/>
-            <template v-slot:modal-footer="{ ok, hide }">
-                <a class="btn-sm btn btn-primary" href="/auth/mediawiki/login">Login</a>
+            {{$t('Message-Login')}}<br/>
+            <template v-slot:modal-footer>
+                <a class="btn-sm btn btn-primary" href="/auth/mediawiki/login">{{$t("Label-Login")}}</a>
                 <b-button size="sm" variant="secondary" @click="snoozeTipLogin()">
-                    Snooze
+                    {{$t("Label-Snooze")}}
                 </b-button>
             </template>
         </b-modal>
@@ -57,88 +67,90 @@
     import {RevisionPanelItem} from "@/shared/interfaces";
     import RevisionPanel from "~/components/RevisionPanel.vue";
     import ActionPanel from "~/components/ActionPanel.vue";
-
+    import JudgementPanel from "~/components/JudgementPanel.vue";
+    import { fetchRevisionPanelItem } from '~/shared/utility-shared';
+    const QUEUE_LIMIT = 3;
     export default {
     components: {
       RevisionPanel,
-      ActionPanel
+      ActionPanel,
+      JudgementPanel
     },
     data() {
       return {
-          title: 'WikiLoop Battlefield',
+          title: 'WikiLoop DoubleCheck',
           currentWikiRevId: null,
-          currentFeedItem: null,
-          currentRevisionPanelItem: <RevisionPanelItem>null,
-          nextFeedItem: null,
-          nextWikiRevId: null,
-          nextRevisionPanelItem: null,
+          feedQueue: [],
+          revisionPanelItems: {},
+          wikiRevIdfromFeeds: {},
           tipLoginCountDown: 5,
           loading:true,
+          showJudgementPanel: false,
       }
     },
     computed: {
-      currentRevision: {
-        get () {
-          return this.$store.state.revisions.wikiRevIdToMeta[this.currentWikiRevId];
-        }
-      },
     },
     methods: {
-      getNewFeedItemAndInfo: async function() {
-          let newFeedItem = await this.$axios.$get(`/api/feed/${this.feedName}?limit=1&wiki=${this.$store.state.wiki}`);
-          if (newFeedItem.revIds.length > 0) {
-              let newWikiRevId = `${this.$store.state.wiki}:${newFeedItem.revIds[0]}`;
-              let newRevisionCardItem = await this.fetchRevisionPanelItem(newWikiRevId);
-              return [newFeedItem, newWikiRevId, newRevisionCardItem];
-          } else return [newFeedItem, null, null];
-      },
-      showNext: async function() {
+      async showNext() {
         this.loading = true;
-        if (this.nextWikiRevId) {
-          // swap current with next
-          [this.currentFeedItem, this.currentWikiRevId, this.currentRevisionPanelItem] =
-          [this.nextFeedItem, this.nextWikiRevId, this.nextRevisionPanelItem];
-        } else {
-          [this.currentFeedItem, this.currentWikiRevId, this.currentRevisionPanelItem] = await this.getNewFeedItemAndInfo();
+        this.showJudgementPanel = false;
+        if (this.feedQueue.length <= 1) {
+          await this.refillQueue();
         }
+        this.currentWikiRevId = this.feedQueue.shift();
         this.loading = false;
-        [this.nextFeedItem, this.nextWikiRevId, this.nextRevisionPanelItem] = await this.getNewFeedItemAndInfo();
-
+        this.refillQueue().then(()=>{console.log(`Quietly refilled the queue.`)});
       },
-      fetchRevisionPanelItem: async function(wikiRevId):Promise<RevisionPanelItem> {
-        let [revision, diff] = await Promise.all([
-          await this.$axios.$get(`/api/revision/${wikiRevId}`),
-          await this.$axios.$get(`/api/diff/${wikiRevId}`)
-        ]);
-        let diffHtml = diff?.compare['*'] || '';
-        return <RevisionPanelItem> {
-          wiki: revision.wiki,
-          revId: revision.revid,
-          title: revision.title,
-          pageId: revision.wki,
-          summary: revision.comment,
-          author: revision.user,
-          timestamp: new Date(revision.timestamp).getTime()/1000,
-          diffHtml: diffHtml,
+      clearQueue: async function() {
+        this.loading = true;
+        this.showJudgementPanel = false;
+        this.feedQueue = [];
+        this.revisionPanelItems = {};
+      },
+      fetchAndClaimRevisions: async function(numToFetch:number):Promise<string[]/*wikiRevIds*/> {
+        let queryObj:any = {
+            limit:numToFetch,
+            wiki:this.$store.state.wiki,
+            feed: this.feedName,
+            userGaId:this.$cookiez.get('_ga'),
         };
+        if (this.$store.state.user?.profile?.displayName) queryObj.wikiUserName = this.$store.state.user?.profile?.displayName;
+        let params = new URLSearchParams(queryObj);
+        let result = await this.$axios.$get(`/api/feed/${this.feedName}?${params.toString()}`);
+        let feed = result.feed;
+        result.wikiRevIds.forEach(wikiRevId => this.wikiRevIdfromFeeds[wikiRevId] = feed);
+        return result.wikiRevIds;
+      },
+      refillQueue: async function() {
+        let numToFetch = QUEUE_LIMIT-this.feedQueue.length;
+        let wikiRevIds = await this.fetchAndClaimRevisions(numToFetch);
+        this.feedQueue.push(...wikiRevIds);
+        await Promise.all(wikiRevIds.map( async wikiRevId => {
+          let item = await fetchRevisionPanelItem(wikiRevId, this.$axios);
+          this.revisionPanelItems[wikiRevId] = item;
+        }));
       },
       snoozeTipLogin: function() {
         this.tipLoginCountDown = 15;
         this.$bvModal.hide(`modal-promote-login`);
       },
-
     },
     validate ({ params }) {
       return (['us2020', 'covid19', 'recent', 'ores', 'mix', 'wikitrust', 'lastbad'].indexOf(params.feed) >= 0);
     },
-
     async asyncData ({ params, $axios }) {
       return { feedName: params.feed };
     },
     async beforeMount() {
-      await this.showNext();
     },
     async mounted() {
+      document.addEventListener(`wiki-change-started`, async() => {
+        await this.clearQueue();
+      });
+      document.addEventListener(`wiki-change-completed`, async () => {
+        await this.refillQueue();
+      });
+
       document.addEventListener('judgement-event', async () => {
         if (!(this.$store.state.user &&this.$store.state.user.profile)) {
           if (this.tipLoginCountDown === 0) {
@@ -182,6 +194,8 @@
           this.$bvModal.show(`modal-keymap`);
         }
       });
+
+      await this.showNext();
     }
   }
 </script>

@@ -17,61 +17,74 @@
 <template>
     <section>
         <div class="container small-screen-padding">
+            <TimeSeriesBarChart></TimeSeriesBarChart>
             <b-form-select class="mt-4"
                     @click.native.stop=''
                     v-model="timeRange"
                     v-on:change="load()">
-                <option :value="null">All time</option>
-                <option :value="1">1 day</option>
-                <option :value="7">1 week (7d)</option>
-                <option :value="30">1 month (30d)</option>
-                <option :value="90">1 quarter (90d)</option>
-                <option :value="365">1 year (365d)</option>
+                <option :value="null">{{$t('Label-AllTime')}}</option>
+                <option :value="1">{{$t('Label-1day')}}</option>
+                <option :value="7">{{$t('Label-1week')}}</option>
+                <option :value="30">{{$t('Label-1Month')}}</option>
+                <option :value="90">{{$t('Label-1Quarter')}}</option>
+                <option :value="365">{{$t('Label-1Year')}}</option>
             </b-form-select>
             <div class="card mt-4">
-                <div class="card-header"><h2>Top Wikis</h2></div>
+                <div class="card-header"><h2>{{$t('Label-TopWikis')}}</h2></div>
                 <div class="card-body">
                     <div class="table-responsive">
                         <table class="table table-bordered table-striped">
                             <thead>
                             <tr>
-                                <th scope="row">Rank</th>
-                                <th>Wiki</th>
-                                <th>Count</th>
-                                <th>Last Active</th>
+                                <th scope="row">{{$t('Label-Rank')}}</th>
+                                <th>Wikis</th>
+                                <th>{{$t('Label-CountOfJudgements')}}</th>
+                                <th>{{$t('Label-LastActiveTime')}}</th>
+                                <th>{{$t('Label-FirstSeen')}}</th>
                             </tr>
                             </thead>
                             <tbody>
                             <template v-for="(leadWiki, index) in wikis">
-                                <tr>
+                                <tr :key="index">
                                     <td scope="col">
                                         {{index + 1}}
                                     </td>
                                     <td scope="col">
-                                        <router-link :to="`/marked/?wiki=${leadWiki.wiki}`" replace>
+                                        <router-link :to="`/history?wiki=${leadWiki.wiki}`" replace>
                                             <span>{{getWiki(leadWiki.wiki)}}</span>
                                         </router-link>
                                     </td>
                                     <td scope="col">{{leadWiki.count}}</td>
                                     <td scope="col">
-                                        <timeago
-                                                :datetime="new Date(leadWiki.lastTimestamp * 1000).toString()"></timeago>
+                                        <timeago :datetime="new Date(leadWiki.lastTimestamp * 1000).toString()" :locale="$i18n.locale"></timeago>
+                                    </td>
+                                    <td scope="col">
+                                        <timeago :datetime="new Date(leadWiki.firstTimestamp * 1000).toString()" :locale="$i18n.locale"></timeago>
                                     </td>
                                 </tr>
                             </template>
                             </tbody>
                             <tfoot>
                               <tr>
-                                <th scope="row">Total</th>
+                                <th scope="row">{{$t('Label-TotalNumber')}}</th>
                                 <th></th>
                                 <th>{{wikis.map(wiki=>wiki.count).reduce((a, b) => a+b, 0)}}</th>
                                 <th>
                                     <timeago
                                             :datetime="new Date(
                                             wikis.map(wiki=>wiki.lastTimestamp)
-                                                .reduce((a, b) => Math.max(a,b), 0) * 1000).toString()">
+                                                .reduce((a, b) => Math.max(a,b), 0) * 1000).toString()" :locale="$i18n.locale">
 
                                     </timeago>
+                                </th>
+                               <th>
+                                    <timeago
+                                            :datetime="new Date(
+                                            wikis.map(wiki=>wiki.firstTimestamp)
+                                                .reduce((a, b) => Math.min(a,b), 999999999999999999) * 1000).toString()" :locale="$i18n.locale">
+
+                                    </timeago>
+
                                 </th>
                               </tr>
                             </tfoot>
@@ -82,43 +95,42 @@
 
             <div class="card mt-4">
                 <div class="card-header">
-                    <h2>Top Users ({{totalLoggedIn}})</h2>
+                    <h2>{{$t('Label-TopUsers')}} ({{totalLoggedIn}})</h2>
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
                         <table class="table table-bordered table-striped">
                             <thead>
                             <tr>
-                                <th scope="row">Rank</th>
-                                <th>User</th>
+                                <th scope="row">{{$t('Label-Rank')}}</th>
+                                <th>{{$t('Label-User')}}</th>
                                 <th>Wikis</th>
-                                <th>Count</th>
-                                <th>Last Active</th>
+                                <th>{{$t('Label-CountOfJudgements')}}</th>
+                                <th>{{$t('Label-LastActiveTime')}}</th>
+                                <th>{{$t('Label-FirstJudgement')}}</th>
                             </tr>
                             </thead>
                             <tbody>
                             <template v-for="(leader, index) in loggedIn">
-                                <tr v-bind:class="{ 'table-success': isMe(leader) }">
+                                <tr v-bind:class="{ 'table-success': isMe(leader) }" :key="leader">
                                     <td scope="col">
                                         {{index + 1}}
                                     </td>
                                     <td scope="col">
-                                        <router-link :to="`/marked/?wikiUserName=${leader.wikiUserName}`" replace>
-                                            <object class="avatar-object"
-                                                    v-bind:data="`/api/avatar/${leader.wikiUserName}`"></object>
-                                            <span v-if="isMe(leader)">Me (User:{{leader.wikiUserName}})</span>
-                                            <span v-else>User:{{leader.wikiUserName}}</span>
-                                        </router-link>
+                                      <UserAvatarWithName :wikiUserName="leader.wikiUserName" :userGaId="leader.userGaId"></UserAvatarWithName>
                                     </td>
                                     <td scope="col">
                                         <template v-for="wiki of leader.wikis">
-                                            <a class="mr-1"
+                                            <a :key="wiki" class="mr-1"
                                                :href="`${getUrlBaseByWiki(wiki)}/wiki/Special:Contributions/${leader.wikiUserName}`">{{getWiki(wiki)}}</a>
                                         </template>
                                     </td>
                                     <td scope="col">{{leader.count}}</td>
                                     <td scope="col">
-                                        <timeago :datetime="new Date(leader.lastTimestamp * 1000).toString()"></timeago>
+                                      <timeago :datetime="new Date(leader.lastTimestamp * 1000).toString()" :locale="$i18n.locale"></timeago>
+                                    </td>
+                                    <td scope="col">
+                                      <timeago :datetime="new Date(leader.firstTimestamp * 1000).toString()" :locale="$i18n.locale"></timeago>
                                     </td>
                                 </tr>
                             </template>
@@ -129,40 +141,39 @@
             </div>
             <div class="card mt-4">
                 <div class="card-header">
-                    <h2>Top 20 Anonymous Users</h2>
+                    <h2><span v-html="$t('Label-TopNumberAnonymousUsers', [20])"></span></h2>
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
                         <table class="table table-bordered table-striped">
                             <thead>
                             <tr>
-                                <th scope="row">Rank</th>
-                                <th>User</th>
+                                <th scope="row">{{$t('Label-Rank')}}</th>
+                                <th>{{$t('Label-User')}}</th>
                                 <th>Wikis</th>
-                                <th>Count</th>
-                                <th>Last Active</th>
+                                <th>{{$t('Label-CountOfJudgements')}}</th>
+                                <th>{{$t('Label-LastActiveTime')}}</th>
+                                <th>{{$t('Label-FirstJudgement')}}</th>
                             </tr>
                             </thead>
                             <tbody>
                             <template v-for="(leader, index) in anonymous">
-                                <tr v-bind:class="{ 'table-success': isMe(leader) }">
+                                <tr v-bind:class="{ 'table-success': isMe(leader) }" :key="leader">
                                     <td scope="col">
                                         {{index + 1}}
                                     </td>
                                     <td scope="col">
-                                        <router-link :to="`/marked/?userGaId=${leader.userGaId}`" replace>
-                                            <object class="avatar-object"
-                                                    v-bind:data="`/api/avatar/${leader.userGaId}`"></object>
-                                            <span v-if="isMe(leader) ">Me</span>
-                                            <span v-else>Someone</span>
-                                        </router-link>
+                                      <UserAvatarWithName :userGaId="leader.userGaId"></UserAvatarWithName>
                                     </td>
                                     <td scope="col">
-                                        <template v-for="wiki of leader.wikis">{{getWiki(wiki)}}</template>
+                                        <span class="mr-1" v-for="wiki of leader.wikis" :key="wiki">{{wiki}}</span>
                                     </td>
                                     <td scope="col">{{leader.count}}</td>
                                     <td scope="col">
-                                        <timeago :datetime="new Date(leader.lastTimestamp * 1000).toString()"></timeago>
+                                      <timeago :datetime="new Date(leader.lastTimestamp * 1000).toString()" :locale="$i18n.locale"></timeago>
+                                    </td>
+                                    <td scope="col">
+                                      <timeago :datetime="new Date(leader.firstTimestamp * 1000).toString()" :locale="$i18n.locale"></timeago>
                                     </td>
                                 </tr>
                             </template>
@@ -176,36 +187,38 @@
     </section>
 </template>
 <script lang="ts">
-  import {getUrlBaseByWiki, fetchDiffWithWikiRevId} from '@/shared/utility-shared';
-  import BootstrapVue from 'bootstrap-vue';
+  import {getUrlBaseByWiki, fetchDiffWithWikiRevId, wikiToLangMap} from '@/shared/utility-shared';
   import VueTimeago from 'vue-timeago';
-  import languages from '@/locales/languages.js';
+  import ISO6391 from 'iso-639-1';
+  import UserAvatarWithName from '@/components/UserAvatarWithName.vue';
 
   export default {
-    comments: {
-      BootstrapVue, VueTimeago
+    components: {
+      VueTimeago,
+      UserAvatarWithName
     }, data() {
       return {
         timeRange: null
       }
-    }, async asyncData({$axios}) {
-      const {loggedIn, anonymous, wikis, totalLoggedIn} = await $axios.$get(`/api/leaderboard`);
+    }, async asyncData({$axios, query}) {
+      let url = `/api/leaderboard`;
+      const {loggedIn, anonymous, wikis, totalLoggedIn} = await $axios.$get(`/api/leaderboard?limit=${query?.limit || 20}`);
       return {loggedIn, anonymous, wikis, totalLoggedIn};
     }, methods: {
       isMe: function (leader) {
         return (this.$store.state.user && this.$store.state.user.profile && this.$store.state.user.profile.displayName === leader.wikiUserName) || this.$cookiez.get('_ga') === leader.userGaId;
       }, getWiki: function (wiki) {
-        for (let lang of languages) {
-          if (lang.value === wiki) return lang.text
-        }
+        let lang = wikiToLangMap[wiki];
+        let nativeName = ISO6391.getNativeName(lang)
+        if(nativeName) return nativeName;
         return wiki; // fall back
       }, load: async function () {
-        const {loggedIn, anonymous, wikis, totalLoggedIn} = await this.$axios.$get(`/api/leaderboard?days=${this.timeRange}`);
+        const {loggedIn, anonymous, wikis, totalLoggedIn} = await this.$axios.$get(`/api/leaderboard?days=${this.timeRange}&limit=${this.$route.query?.limit || 20}}`);
         this.loggedIn = loggedIn;
         this.anonymous = anonymous;
         this.wikis = wikis;
         this.totalLoggedIn = totalLoggedIn;
-      }
+      },
     }, mounted() {
       this.$ga.page('/leaderboard.vue');
     }, beforeCreate() {
@@ -222,4 +235,19 @@
         margin-top: -18px;
         margin-bottom: -18px;
     }
+    .svg-container {
+      display: inline-block;
+      position: relative;
+      width: 100%;
+      padding-bottom: 100%; /* aspect ratio */
+      vertical-align: top;
+      overflow: hidden;
+    }
+    .svg-content-responsive {
+      display: inline-block;
+      position: absolute;
+      top: 10px;
+      left: 0;
+    }
+
 </style>

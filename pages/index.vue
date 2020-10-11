@@ -13,13 +13,12 @@
                 ></RevisionCard>
         </template>
 
-      <b-modal id="modal-promote-login" title="Tip: Login">
-        Do you know you could Login and preserve your labels under your name?
-        We support Login with Wikipedia account through Oauth. <br/>
+      <b-modal id="modal-promote-login" v-bind:title="$t('Label-PromptLogin')">
+        {{$t('Message-PromptLogin')}} <br/>
         <template v-slot:modal-footer="{ ok, hide }">
-          <a class="btn-sm btn btn-primary" href="/auth/mediawiki/login">Login</a>
+          <a class="btn-sm btn btn-primary" href="/auth/mediawiki/login">{{$t('Label-Login')}}</a>
           <b-button size="sm" variant="secondary" @click="snoozeTipLogin()">
-            Snooze
+            {{$t('Label-Snooze')}}
           </b-button>
         </template>
       </b-modal>
@@ -70,7 +69,7 @@
             showNext: async function() {
                 this.currentWikiRevId = this.$store.state.revisions.nextWikiRevIdsHeap.peek();
                 this.$store.commit(`revisions/pop`);
-                await this.$store.dispatch(`revisions/loadMoreWikiRevs`);
+                // await this.$store.dispatch(`revisions/loadMoreWikiRevs`).then();
                 /*unawait*/ this.$store.dispatch(`revisions/preloadAsyncMeta`).then();
             },
             snoozeTipLogin: function() {

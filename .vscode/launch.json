@@ -1,0 +1,44 @@
+{
+  "version": "0.2.0",
+  "compounds": [
+    {
+      "name": "server and client",
+      "configurations": ["server", "client: chrome"]
+    }
+  ],
+  "configurations": [
+    {
+      "name": "Current TS file",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/ts-node",
+      "runtimeArgs": ["-r", "tsconfig-paths/register", "--project", "tsconfig.json"],
+      "args": ["${relativeFile}"],
+      "cwd": "${workspaceRoot}",
+      "internalConsoleOptions": "openOnSessionStart",
+      "skipFiles": ["<node_internals>/**", "node_modules/**"],
+      // "protocol": "inspector",
+      // "sourceMaps": true
+    },
+    {
+      "name": "server",
+      "request": "launch",
+      "runtimeArgs": [
+        "run",
+        "debug"
+      ],
+      "runtimeExecutable": "npm",
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "type": "pwa-node"
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "client: chrome",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}"
+    }
+  ]
+}

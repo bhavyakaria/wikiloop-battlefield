@@ -46,6 +46,7 @@ export const mutations = {
 
 export const actions = {
     async nuxtServerInit({ commit, state, dispatch }, { req }) {
+        console.log(`nuxtServerInit start`);
         const flags = await this.$axios.$get(`/api/flags`);
         commit('setFlags', flags);
         const version = await this.$axios.$get(`/api/version`);
@@ -68,6 +69,8 @@ export const actions = {
             console.log(`nuxtServerInit store state clearProfile because req.user is not defined`);
             commit('user/clearProfile');
         }
+
+        console.log(`nuxtServerInit done`);
     },
    /** An vuex action to change the current wiki, denoted by `wiki`.
    *
@@ -81,8 +84,7 @@ export const actions = {
    * @return {Promise<void>}
    */
     async changeWiki({ commit, state, dispatch}, wiki) {
-      let oldWiki = state.wiki;
-      let newWiki = wiki;
+      document.dispatchEvent(new Event(`wiki-change-started`));
       commit(`setWiki`, wiki);
       commit(`revisions/initHeap`);
       await this.$axios.$post(`/api/auth/user/preferences`, {wiki: wiki});

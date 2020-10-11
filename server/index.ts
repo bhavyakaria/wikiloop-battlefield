@@ -18,28 +18,23 @@ require('dotenv').config({
   path: envPath
 });
 
-import {installHook} from "~/server/routes/interaction";
+import { OresStream } from "@/server/ingest/ores-stream";
+import { getUrlBaseByWiki, wikiToDomain } from "@/shared/utility-shared";
+import { installHook } from "~/server/routers/api/interaction";
+import { BasicJudgement } from "~/shared/interfaces";
+import { InteractionProps } from "~/shared/models/interaction-item.model";
+import { UsageReportCronJob } from "../cronjobs/usage-report.cron";
+import { AwardBarnStarCronJob } from "../cronjobs/award-barnstar.cron";
 
-import {AwardBarnStarCronJob, UsageReportCronJob} from "../cronjobs";
-import routes from './routes';
-import {
-  apiLogger,
-  asyncHandler,
-  computeOresField,
-  ensureAuthenticated,
-  fetchRevisions,
-  isWhitelistedFor,
-  logger,
-  perfLogger,
-  useOauth
-} from './common';
-import {feedRouter} from "./routes/feed";
-import {getUrlBaseByWiki, wikiToDomain} from "@/shared/utility-shared";
-import {getMetrics, metricsRouter} from "@/server/metrics";
-import {OresStream} from "@/server/ingest/ores-stream";
-import {actionRouter} from "./routes/action";
-import {InteractionProps} from "~/shared/models/interaction-item.model";
-import {BasicJudgement} from "~/shared/interfaces";
+import { apiLogger, asyncHandler, ensureAuthenticated, fetchRevisions, isWhitelistedFor, logger, perfLogger, useOauth, colorizeMaybe, latencyColor, statusColor } from './common';
+import { getMetrics } from "./routers/api/metrics";
+import { apiRouter as newApiRouter } from "./routers/api";
+import { axiosLogger, cronLogger } from '@/server/common';
+import axios from 'axios';
+import { debugRouter } from "@/server/routers/debug";
+import {CronJob} from 'cron';
+import { FeedRevisionEngine } from '@/server/feed/feed-revision-engine';
+import { initDotEnv, initMongoDb, initUnhandledRejectionCatcher } from './init-util';
 
 const http = require('http');
 const express = require('express');
@@ -49,10 +44,12 @@ const {Nuxt, Builder} = require('nuxt');
 const universalAnalytics = require('universal-analytics');
 const rp = require('request-promise');
 const mongoose = require('mongoose');
+const pad = require('pad');
+const {performance} = require('perf_hooks');
 
 const logReqPerf = function (req, res, next) {
   // Credit for inspiration: http://www.sheshbabu.com/posts/measuring-response-times-of-express-route-handlers/
-  perfLogger.debug(` log request starts for ${req.method} ${req.originalUrl}:`, {
+  perfLogger.debug(` log request starts for ${req.method} ${colorizeMaybe(perfLogger, 'lightblue', req.originalUrl)}:`, {
     method: req.method,
     original_url: req.originalUrl,
     ga_id: req.cookies._ga,
@@ -60,22 +57,45 @@ const logReqPerf = function (req, res, next) {
   const startNs = process.hrtime.bigint();
   res.on(`finish`, () => {
     const endNs = process.hrtime.bigint();
-    perfLogger.debug(` log response ends for ${req.method} ${req.originalUrl}:`, {
-      method: req.method,
-      original_url: req.originalUrl,
-      ga_id: req.cookies._ga,
-      time_lapse_ns: endNs - startNs,
-      start_ns: startNs,
-      end_ns: endNs,
-    });
-    if (req.session) {
-      perfLogger.debug(` log request session info for ${req.method} ${req.originalUrl}:`, {
-        session_id: req.session.id
+    let latencyMs = Number(endNs - startNs) / 1e6;
+    let level = 'info';
+
+    perfLogger.info(
+      `${colorizeMaybe(perfLogger, latencyColor(latencyMs), pad(6, (latencyMs).toFixed(0)))}ms ` +
+      `${colorizeMaybe(perfLogger, statusColor(res.statusCode), pad(4, res.statusCode))} ` +
+      `${req.method} ${colorizeMaybe(perfLogger, 'lightblue', req.originalUrl)}`,
+      {
+        ga_id: req.cookies._ga,
+        session_id: req.session?.id
       });
-    }
   });
   next();
 };
+
+if (process.env.NODE_ENV === 'development') {
+  axiosLogger.info(`Axios: setup timing monitoring`)
+  let axiosTiming = (instance, callback) => {
+    instance.interceptors.request.use((request) => {
+        request.ts = performance.now()
+        return request
+    })
+
+    instance.interceptors.response.use((response) => {
+        callback(response, Number(performance.now() - response.config.ts))
+        return response
+    })
+  }
+
+  axiosTiming(axios, function(response, latencyMs) {
+    let level = 'info';
+
+    axiosLogger.info(
+      `${colorizeMaybe(axiosLogger, latencyColor(latencyMs), pad(6, (latencyMs).toFixed(0)))}ms ` +
+      `${colorizeMaybe(axiosLogger, statusColor(response.status), pad(4, response.status))} ` +
+      `${response.config.method} ${colorizeMaybe(axiosLogger, 'lightblue', response.config.url)}`);
+  });
+}
+
 
 let docCounter = 0;
 let allDocCounter = 0;
@@ -85,150 +105,7 @@ config.dev = !(process.env.NODE_ENV === 'production');
 
 // -------------- FROM API ----------------
 function setupApiRequestListener(db, io, app) {
-  // TODO(xinbenlv): consider use native ExpressJS nested Router pattern.
-  let apiRouter = express();
-
-  const apicache = require('apicache');
-  let cache = apicache.middleware;
-  const onlyGet = (req, res) => res.method === `GET`;
-
-  apiRouter.use(cache('1 week', onlyGet));
-
-  apiRouter.get('/', asyncHandler(routes.root));
-
-  apiRouter.get('/diff/:wikiRevId', asyncHandler(routes.diffWikiRevId));
-
-  apiRouter.get('/diff', asyncHandler(routes.diff));
-
-  apiRouter.get('/recentchanges/list', asyncHandler(routes.listRecentChanges));
-
-  apiRouter.get('/ores', asyncHandler(routes.ores));
-
-  apiRouter.get('/ores/:wikiRevId', asyncHandler(routes.oresWikiRevId));
-
-  apiRouter.get('/revision/:wikiRevId', asyncHandler(routes.revisionWikiRevId));
-
-  apiRouter.get('/revisions', asyncHandler(routes.revision));
-
-  apiRouter.get('/interaction/:wikiRevId', asyncHandler(routes.getInteraction));
-
-  apiRouter.get('/interactions', asyncHandler(routes.listInteractions));
-  apiRouter.get('/labels', asyncHandler(routes.listLabels));
-
-  apiRouter.post('/interaction/:wikiRevId', asyncHandler(routes.updateInteraction));
-
-  apiRouter.get("/markedRevs.csv", asyncHandler(routes.markedRevsCsv));
-
-  apiRouter.get("/markedRevs", asyncHandler(routes.markedRevs));
-
-  /**
-   * Return a list of all leader
-   * Pseudo SQL
-   *
-   *
-   * ```SQL
-   *   SELECT user, count(*) FROM Interaction GROUP BY user ORDER by user;
-   * ````
-   */
-  apiRouter.get('/leaderboard', asyncHandler(routes.leaderboard));
-
-
-  apiRouter.get('/stats', asyncHandler(routes.basic));
-  apiRouter.get('/stats/timeseries/labels', asyncHandler(routes.labelsTimeSeries));
-  apiRouter.get('/stats/champion', asyncHandler(routes.champion));
-
-  // TODO build batch api for avatar until performance is an issue. We have cache anyway should be fine.
-  apiRouter.get("/avatar/:seed", asyncHandler(routes.avatar));
-
-  apiRouter.get('/latestRevs', asyncHandler(routes.latestRevs));
-
-  apiRouter.get('/flags', asyncHandler(routes.flags));
-
-  apiRouter.get('/mediawiki', asyncHandler(routes.mediawiki));
-
-  apiRouter.get('/version', asyncHandler(routes.version));
-  apiRouter.get('/test', (req, res) => { res.send('test ok')});
-  app.use(`/api`, apiRouter);
-}
-
-// ----------------------------------------
-
-function setupMediaWikiListener(db, io) {
-  logger.debug(`Starting mediaWikiListener.`);
-
-  return new Promise(async (resolve, reject) => {
-    const EventSource = require('eventsource');
-    const url = 'https://stream.wikimedia.org/v2/stream/revision-score';
-
-    logger.debug(`Connecting to EventStreams at ${url}`);
-
-    const eventSource = new EventSource(url);
-    eventSource.onopen = function (event) {
-      logger.debug(`Stream connected: ${url}`);
-    };
-
-    eventSource.onerror = function (event) {
-      logger.error(`Stream error: ${url}`, event);
-    };
-
-    eventSource.onmessage = async function (event) {
-      allDocCounter++;
-      let recentChange = JSON.parse(event.data);
-      // logger.debug(`server received`, data.wiki, data.id, data.meta.uri);
-      recentChange._id = (`${recentChange.wiki}-${recentChange.id}`);
-      if (recentChange.type === "edit") {
-        // Currently only support these wikis.
-        if (Object.keys(wikiToDomain).indexOf(recentChange.wiki) >= 0) {
-          // TODO(xinbenlv): remove it after we build review queue or allow ORES missing
-          if (recentChange.wiki == "wikidatawiki" && Math.random() <= 0.9) return; // ignore 90% of wikidata
-
-          try {
-            let oresUrl = `https://ores.wikimedia.org/v3/scores/${recentChange.wiki}/?models=damaging|goodfaith&revids=${recentChange.revision.new}`;
-            let oresJson;
-            try {
-              oresJson = await rp.get(oresUrl, {json: true});
-            } catch(e) {
-              if (e.StatusCodeError === 429) {
-                  logger.warn(`ORES hits connection limit `, e.errmsg);
-              }
-              return;
-            }
-            recentChange.ores = computeOresField(oresJson, recentChange.wiki, recentChange.revision.new);
-            let doc = {
-              _id: recentChange._id,
-              id: recentChange.id,
-              revision: recentChange.revision,
-              title: recentChange.title,
-              user: recentChange.user,
-              wiki: recentChange.wiki,
-              timestamp: recentChange.timestamp,
-              ores: recentChange.ores,
-              namespace: recentChange.namespace,
-              nonbot: !recentChange.bot,
-              wikiRevId: `${recentChange.wiki}:${recentChange.revision.new}`,
-            };
-            docCounter++;
-            doc['comment'] = recentChange.comment;
-            io.sockets.emit('recent-change', doc);
-            delete doc['comment'];
-            // TODO add
-            // await db.collection(`MediaWikiRecentChange`).insertOne(doc);
-
-          } catch (e) {
-            if (e.name === "MongoError" && e.code === 11000) {
-              logger.warn(`Duplicated Key Found`, e.errmsg);
-            } else {
-              logger.error(e);
-            }
-          }
-        }
-        else {
-          logger.debug(`Ignoring revision from wiki=${recentChange.wiki}`);
-        }
-      }
-    };
-
-  });
+  app.use(`/api`, newApiRouter);
 }
 
 function setupCronJobs() {
@@ -245,7 +122,7 @@ function setupCronJobs() {
         awardBarnStarCronJob.startCronJob();
       });
   } else {
-    logger.warn(`Skipping Barnstar cronjobs because of lack of CRON_BARNSTAR_TIMES which is: `, process.env.CRON_BARNSTAR_TIMES);
+    logger.info(`Skipping Barnstar cronjobs because of lack of CRON_BARNSTAR_TIMES which is: `, process.env.CRON_BARNSTAR_TIMES);
   }
 
   if (process.env.CRON_USAGE_REPORT_TIMES) {
@@ -261,18 +138,38 @@ function setupCronJobs() {
         usageReportCronJob.startCronJob();
       });
   } else {
-    logger.warn(`Skipping UsageReportCronJob because of lack of CRON_BARNSTAR_TIMES which is: `, process.env.CRON_BARNSTAR_TIMES);
+    logger.info(`Skipping UsageReportCronJob because of lack of CRON_BARNSTAR_TIMES which is: `, process.env.CRON_BARNSTAR_TIMES);
   }
 
+  if (process.env.CRON_CATEGORY_TRAVERSE_TIME) {
+    logger.info(`Setting up CronJob for traversing category tree to run at ${process.env.CRON_CATEGORY_TRAVERSE_TIME}`);
+    let traverseCategoryTreeCronJob = new CronJob(process.env.CRON_CATEGORY_TRAVERSE_TIME, async () => {
+      cronLogger.info(`Start running traverseCategoryTree...`);
+      await FeedRevisionEngine.traverseCategoryTree('us2020', 'enwiki', 'Category:2020_United_States_presidential_election');
+      await FeedRevisionEngine.traverseCategoryTree('covid19', 'enwiki', 'Category:COVID-19');
+      cronLogger.info(`Done running traverseCategoryTree!`);
+    }, null, false, process.env.CRON_TIMEZONE || "America/Los_Angeles");
+    traverseCategoryTreeCronJob.start();
+  }
+  if (process.env.CRON_FEED_REVISION_TIME) {
+    logger.info(`Setting up CronJob for populating feed revisions to run at ${process.env.CRON_FEED_REVISION_TIME}`);
+    let feedRevisionCronJob = new CronJob(process.env.CRON_FEED_REVISION_TIME, async () => {
+      cronLogger.info(`Start running populateFeedRevisions...`);
+      await FeedRevisionEngine.populateFeedRevisions('us2020', 'enwiki');
+      await FeedRevisionEngine.populateFeedRevisions('covid19', 'enwiki');
+      cronLogger.info(`Done running populateFeedRevisions!`);
+    }, null, false, process.env.CRON_TIMEZONE || "America/Los_Angeles");
+    feedRevisionCronJob.start();
+  }
 }
 
 function setupHooks() {
-  // See https://github.com/google/wikiloop-battlefield/issues/234
+  // See https://github.com/google/wikiloop-doublecheck/issues/234
   // TODO(xinbenlv): add authentication.
   installHook('postToJade', async function(i:InteractionProps) {
     let revId = i.wikiRevId.split(':')[1];
     let wiki = i.wikiRevId.split(':')[0];
-    if (wiki =='enwiki'  // we only handle enwiki for now. See https://github.com/google/wikiloop-battlefield/issues/234
+    if (wiki =='enwiki'  // we only handle enwiki for now. See https://github.com/google/wikiloop-doublecheck/issues/234
     && [
       BasicJudgement.ShouldRevert.toString(),
       BasicJudgement.LooksGood.toString(),
@@ -488,13 +385,13 @@ function setupAuthApi(db, app) {
           "action": "edit",
           "format": "json",
           "title": revInfo[0].title, // TODO(zzn): assuming only 1 revision is being reverted
-          "summary": `Identified as test/vandalism and undid revision ${revId} by [[User:${revInfo[0].user}]] with [[m:WikiLoop Battlefield]](v${require(
+          "summary": `Identified as test/vandalism and undid revision ${revId} by [[User:${revInfo[0].user}]] with [[m:WikiLoop DoubleCheck]](v${require(
             './../package.json').version}). See it or provide your opinion at http://${process.env.PUBLIC_HOST || "localhost:8000"}/revision/${wiki}/${revId}`,
           "undo": revId,
           "token": token
         };
-        if (wiki == 'enwiki') { // currently only enwiki has the manually created tag of WikiLoop Battlefield
-          payload['tags'] = "WikiLoop Battlefield";
+        if (wiki == 'enwiki') { // currently only enwiki has the manually created tag of WikiLoop DoubleCheck
+          payload['tags'] = "WikiLoop Battlefield"; // TODO(xinbenlv@, #307) Update the name to "WikiLoop DoubleCheck", and also request to support it on other language
         }
         let retData = await oauthFetch(apiUrl, payload, {method: 'POST'}, req.user.oauth );  // assuming request succeeded;
         res.setHeader('Content-Type', 'application/json');
@@ -536,20 +433,6 @@ function setupAuthApi(db, app) {
         .toArray();
       res.send(userPreferences.length > 0 ? userPreferences[0] : {});
     }));
-
-
-}
-
-function setupRouters(db: IDBDatabase, app: any) {
-
-  app.use(`/api/feed`, feedRouter);
-  app.use(`/api/metrics`, metricsRouter);
-  if (process.env.STIKI_MYSQL) {
-    const scoreRouter = require("./routes/score").scoreRouter;
-    app.use(`/api/score`, scoreRouter);
-  }
-
-  app.use(`/api/action`, actionRouter);
 }
 
 function setupFlag() {
@@ -567,6 +450,10 @@ function setupFlag() {
 }
 
 async function start() {
+
+  initDotEnv();
+  await initMongoDb();
+  initUnhandledRejectionCatcher();
   const flag = setupFlag();
   // Init Nuxt.js
   const nuxt = new Nuxt(config)
@@ -587,9 +474,6 @@ async function start() {
   const server = http.Server(app);
   const io = require('socket.io')(server, { cookie: false });
   app.set('socketio', io);
-  await mongoose.connect(process.env.MONGODB_URI,
-    { useNewUrlParser: true, useUnifiedTopology: true, useFindAndModify: false }
-    );
 
   app.use(function (req, res, next) {
     apiLogger.debug('req.originalUrl:', req.originalUrl);
@@ -599,14 +483,9 @@ async function start() {
   });
   if (useOauth) setupAuthApi(mongoose.connection.db, app);
   setupIoSocketListener(mongoose.connection.db, io);
-  // setupMediaWikiListener(mongoose.connection.db, io);
   setupApiRequestListener(mongoose.connection.db, io, app);
-  setupRouters(mongoose.connection.db, app);
-  if (process.env.STIKI_MYSQL) {
-    const scoreRouter = require("./routes/score").scoreRouter;
-    app.use('/score', scoreRouter);
-    app.use('/extra', scoreRouter); // DEPRECATED, added for backward compatibility.
-  }
+  if (process.env.NODE_ENV !== 'production') app.use(`/debug`, debugRouter);
+
   if (!flag['server-only']) {
     await nuxt.ready();
 

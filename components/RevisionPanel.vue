@@ -22,31 +22,31 @@
           <div class="flex-grow-1">
             [[<a :href="wikiPageUrl" target="_blank">{{ item.title }}</a>]]
             <sup><a v-bind:href="diffUrl" target="_blank">
-              <small>rev.{{item.revId}}</small>
+              <small>rev.{{item.revId}} <!-- no translation, specific term --></small>
             </a></sup>
           </div>
           <div class="ml-2"><a :href="permUrl"><i class="fas fa-link"></i></a></div>
         </div>
-        <div v-if="feedName"><small><span class="badge badge-success">{{feedName}} feed</span></small></div>
+        <div v-if="feedName"><small><span class="badge badge-success">{{feedName}} feed<!-- no translation, specific term --></span></small></div>
       </h5>
       <div class="card-subtitle mb-2 text-muted">
         <div class="row">
           <div class="col-sm">
-            <span class="nobreak"><b>Edited:</b> <timeago :datetime="timeString" :auto-update="60" :locale="$i18n.locale"></timeago></span>
+            <span class="nobreak"><b>{{$t('Label-EditedAt')}}:</b> <timeago :datetime="timeString" :auto-update="60" :locale="$i18n.locale"></timeago></span>
           </div>
           <div class="col-sm">
-            <span class="nobreak"><b>Author:</b> <a v-bind:href="authorUrl" target="_blank">{{ item.author }}</a></span>
+            <span class="nobreak"><b>{{$t('Label-Author')}}:</b> <a v-bind:href="authorUrl" target="_blank">{{ item.author }}</a></span>
           </div>
         </div>
       </div>
 
       <div class="card-text w-100 pl-sm-0 mb-3">
         <template  v-if="item.diffHtml">
-          <h5 class="w-100">Diff View</h5>
-          <diff-box v-bind:diffContent="item.diffHtml"/>
+          <h5 class="w-100">{{$t('Label-DiffView')}}</h5>
+          <diff-box v-bind:diffContent="item.diffHtml" :wikiRevId="wikiRevId" :diffMetadata="item.diffMetadata"/>
         </template>
         <template v-else>
-        <h5>{{$t(`DiffNotAvailable`)}}
+        <h5>{{$t(`Message-DiffNotAvailable`)}}
           <div v-on:click="loadDiff()" class="btn btn-outline-primary btn-small"><i class="fas fa-redo"></i></div>
           <a v-if="item" class="btn btn-outline-primary" :href="revertUrl" target="_blank"><i class="fas fa-external-link-alt"></i></a>
         </h5>
@@ -54,11 +54,11 @@
       </div>
       <div class="card-text w-100 pl-sm-0 mb-3">
         <template v-if="item.summary">
-          <h5 class="w-100">Summary</h5>
+          <h5 class="w-100">{{$t('Label-EditSummary')}}</h5>
           <span>{{item.summary}}</span>
         </template>
         <template v-else>
-          <h5 class="text-danger w-100">No edit summary</h5>
+          <h5 class="text-danger w-100">{{$t('Message-ThereIsNoEditSummary')}}</h5>
         </template>
       </div>
     </div>
@@ -78,7 +78,7 @@
     })
     export default class RevisionPanel extends Vue {
         @Prop({type: Object, required: true}) readonly item!: RevisionPanelItem;
-        @Prop({type: String, required: true}) readonly feedName!: string;
+        @Prop({type: String, required: false}) readonly feedName?: string;
 
         get wikiPageUrl() {
             return `${getUrlBaseByWiki(this.item.wiki)}/wiki/${this.item.title}`;

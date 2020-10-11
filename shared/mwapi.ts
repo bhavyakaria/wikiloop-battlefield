@@ -18,15 +18,86 @@
 import {wikiToDomain} from "@/shared/utility-shared";
 import {logger} from "@/server/common";
 import * as _ from 'underscore';
-const rp = require('request-promise');
+const axios = require('axios');
 import update from 'immutability-helper';
-const MAX_MWAPI_LIMIT:number = 5000;
+const MAX_MWAPI_LIMIT:number = 50;
+const userAgent = process.env.USER_AGENT || 'WikiLoop DoubleCheck Dev';
+const Bottleneck = require("bottleneck");
+
+/**
+  "pageid": 48410011,
+  "ns": 0,
+  "title": "2020 United States presidential election",
+  "type": "page",
+  "timestamp": "2020-03-28T19:51:23Z"
+ */
+export interface MwPageInfo {
+  pageid?:string,
+  ns?:string,
+  title?:string,
+  timestamp?:string,
+}
+
 /**
  * MediaWiki Action API Client Utility
  *
  * @doc https://www.mediawiki.org/wiki/API:Main_page
  */
 export class MwActionApiClient {
+  private static bottleneck = new Bottleneck({
+    minTime: 100
+  });
+  public static async getMwPageInfosByTitles(wiki:string, titles:string[]):Promise<MwPageInfo[]> {
+    console.assert(titles && titles.length > 0 && titles.length <= MAX_MWAPI_LIMIT, `Parameter titles needs to has a length between 1 to ${MAX_MWAPI_LIMIT}}, but was ${titles.length}.`);
+
+    let params = {
+    "action": "query",
+    "format": "json",
+    "prop": "pageprops",
+    "titles": titles.join('|')
+    };
+    let endpoint =`http://${wikiToDomain[wiki]}/w/api.php`;
+
+    let result = await MwActionApiClient.bottleneck.schedule(
+      async ()=> await axios.get(endpoint, {params:params, headers: { 'User-Agent': userAgent }}));
+    if (Object.keys(result.data.query?.pages).length) {
+      return Object.keys(result.data.query.pages).map(pageId=> {
+        return result.data.query.pages[pageId]
+      });
+    }
+    return [];
+  }
+
+  public static async getPageViewsByTitles(wiki:string, titles:string[], days:number = 60):Promise<object> {
+    console.assert(titles && titles.length > 0 && titles.length <= MAX_MWAPI_LIMIT, `Parameter titles needs to has a length between 1 to ${MAX_MWAPI_LIMIT}}, but was ${titles.length}.`);
+
+    let params =
+    {
+      "action": "query",
+      "format": "json",
+      "prop": "pageviews",
+      "titles": titles.join('|'),
+      "pvipdays": days
+    };
+    let endpoint =`http://${wikiToDomain[wiki]}/w/api.php`;
+    let ret = {};
+    let result = await MwActionApiClient.bottleneck.schedule(
+      async ()=> await axios.get(endpoint, {params:params, headers: { 'User-Agent': userAgent }}));
+    console.assert(Object.keys(result.data.query?.pages).length == titles.length);
+    for (let i = 0; i<Object.keys(result.data.query.pages).length; i++) {
+        let pageId = Object.keys(result.data.query.pages)[i];
+        let pageviewsOfPage = result.data.query.pages[pageId].pageviews;
+        let title = result.data.query.pages[pageId].title;
+        let pageviewCount = 0;
+        if (pageviewsOfPage) {
+          pageviewCount = Object.values(pageviewsOfPage).reduce((a: number, b:number) => a + b, 0) as number;
+        }
+        ret[title] = pageviewCount;
+    }
+
+    return ret;
+  }
+
   public static async getRevisionIdsByTitle(
     wiki:string, pageTitle: string,
     startRevId: number = null, limit:number = MAX_MWAPI_LIMIT):Promise<object> {
@@ -49,7 +120,9 @@ export class MwActionApiClient {
     let url = new URL(`http://${wikiToDomain[wiki]}/w/api.php?${searchParams.toString()}`);
     console.log(`Url = `, url);
     try {
-      let revisionsJson = await rp.get(url.toString(), {json: true});
+      let revisionsJson = (await MwActionApiClient.bottleneck.schedule(async()=> await axios.get(url.toString(), {
+        headers: { 'User-Agent': userAgent }
+      }))).data;
       let pageId = Object.keys(revisionsJson.query.pages)[0];
       if (revisionsJson.query.pages[pageId].revisions)
         return revisionsJson.query.pages[pageId].revisions.map(item => item.revid);
@@ -102,19 +175,22 @@ export class MwActionApiClient {
    * @param
    * @returns raw object of recentChanges.
    */
-  public static getRawRecentChanges = async function ({wiki = 'enwiki', direction, timestamp, limit = 500}) {
+  public static getRawRecentChanges = async function ({wiki = 'enwiki', direction, timestamp, limit = 500, bad=false, isLast=false}) {
     let searchParams = new URLSearchParams(
       {
         "action": "query",
         "format": "json",
-        "prop": "info",
         "list": "recentchanges",
-        "rcnamespace": "0", // by default only request article namespace
-        "rcprop": "user|userid|comment|flags|timestamp|ids|title|oresscores",
-        "rcshow": "!bot", // by default do not show bot edits
+        "formatversion": "2",
+        "rcnamespace": "0",
+        "rcprop": "title|timestamp|ids|oresscores|flags|tags|sizes|comment|user",
+        "rcshow": "!bot",
+        "rclimit": "1",
         "rctype": "edit",
         "rctoponly": "1",
       });
+    if (bad) searchParams.set('rcshow', '!bot|oresreview');
+    if (isLast) searchParams.set('rctoponly', '1');
     if (direction) searchParams.set(`rcdir`, direction || `older`);
     if (timestamp) searchParams.set(`rcstart`, timestamp || (new Date().getTime()/1000));
     searchParams.set(`rclimit`, limit.toString());
@@ -123,8 +199,10 @@ export class MwActionApiClient {
     logger.info(`Requesting for Media Action API: ${url.toString()}`);
     logger.info(`Try sandbox request here: ${new URL(`http://${wikiToDomain[wiki]}/wiki/Special:ApiSandbox#${searchParams.toString()}`)}`);
 
-    let recentChangesJson = await rp.get(url.toString(), {json: true});
-
+    let response = await MwActionApiClient.bottleneck.schedule(async () => await axios.get(url.toString(), {
+      headers: { 'User-Agent': userAgent }
+    }));
+    let recentChangesJson = response.data;
     /** Sample response
      {
      "batchcomplete":"",
@@ -151,7 +229,169 @@ export class MwActionApiClient {
         ]
      }
     }*/
-
     return recentChangesJson;
   }
+
+  public static getLastRevisionsByTitles = async function (titles:string[], wiki = 'enwiki', rvcontinue = null) {
+    let query: any = {
+      "action": "query",
+      "format": "json",
+      "prop": "revisions",
+      "titles": titles.join('|'),
+      "rvprop": "ids|timestamp|flags|comment|user|oresscores|tags|userid|roles|flagged"
+    };
+    if (rvcontinue) {
+      query.rvcontinue = rvcontinue;
+    }
+    let searchParams = new URLSearchParams(query);
+    let url = new URL(`http://${wikiToDomain[wiki]}/w/api.php?${searchParams.toString()}`);
+    return (await MwActionApiClient.bottleneck.schedule(async () => await axios.get(url.toString(), {
+      headers: { 'User-Agent': userAgent }
+    }))).data;
+  }
+
+  public static getDiffByWikiRevId = async function (wiki:string, revId:number) {
+    let query: any = {
+      "action": "compare",
+      "format": "json",
+      "fromrev": `${revId}`,
+      "torelative": `prev`,
+    };
+    let searchParams = new URLSearchParams(query);
+    let url = new URL(`http://${wikiToDomain[wiki]}/w/api.php?${searchParams.toString()}`);
+    let result = (await MwActionApiClient.bottleneck.schedule(async () =>await axios.get(url.toString(), {
+      headers: { 'User-Agent': userAgent }
+    }))).data;
+    return result;
+  }
+
+  /**
+   * Given a wiki, using a title to get all it's category children
+   * please note this function handles the "continue" call to MediaWiki Action API
+   * it is in charge of making all follow up queries.
+   *
+   * @param wiki
+   * @param entryArticle
+   */
+  public static getCategoryChildren = async function (wiki, entryArticle):Promise<MwPageInfo[]> {
+    let endpoint =`http://${wikiToDomain[wiki]}/w/api.php`;
+    let result = [];
+    let params = {
+      "action": "query",
+      "format": "json",
+      "list": "categorymembers",
+      "formatversion": "2",
+      "cmtitle": entryArticle,
+      "cmprop": "ids|timestamp|title",
+      "cmnamespace": "0|14",
+      "cmlimit": "500",
+    };
+    let ret = null;
+
+    do {
+      ret = await axios.get(endpoint, {params: params, headers: { 'User-Agent': userAgent }});
+
+        /**json
+        {
+          "batchcomplete": true,
+          "continue": {
+          "cmcontinue": "page|0f53aa04354b3131430443294f394543293f042d45435331434f394543011f01c4dcc1dcbedc0d|61561742",
+          "continue": "-||"
+          },
+          "query": {
+            "categorymembers": [
+              {
+                "pageid": 48410011,
+                "ns": 0,
+                "title": "2020 United States presidential election",
+                "timestamp": "2020-03-28T19:51:23Z"
+              }
+            ],
+          }
+        }
+        */
+      if (ret.data?.query?.categorymembers?.length > 0) {
+        ret.data.query.categorymembers.forEach(item => console.log(`${JSON.stringify(item.title, null, 2)}`));
+        result.push(...ret.data.query.categorymembers);
+        if (ret.data?.continue?.cmcontinue) params['cmcontinue'] = ret.data.continue.cmcontinue;
+      } else {
+        return result;
+      }
+     } while (ret.data?.continue?.cmcontinue);
+    return result;
+  }
+
+  /**
+   * Given a wiki, using a title to get all it's category children
+   * please note this function handles the "continue" call to MediaWiki Action API
+   * it is in charge of making all follow up queries.
+   *
+   * @param wiki
+   * @param entryArticle
+   */
+  public static getLinkChildren = async function (wiki, entryArticle):Promise<string[]> {
+    try {
+
+
+    let endpoint =`http://${wikiToDomain[wiki]}/w/api.php`;
+    let result:string[] = [];
+    let params = {
+      "action": "query",
+      "format": "json",
+      "prop": "links",
+      "formatversion": "2",
+      "plnamespace": "0",
+      "titles": entryArticle,
+      "pllimit": "500",
+    };
+    let ret = null;
+
+    do {
+      ret = await axios.get(endpoint, {params: params, headers: { 'User-Agent': userAgent }});
+
+        /**json
+        {
+            "continue": {
+                "plcontinue": "9228|0|2010_TK7",
+                "continue": "||"
+            },
+            "query": {
+                "pages": {
+                    "9228": {
+                        "pageid": 9228,
+                        "ns": 0,
+                        "title": "Earth",
+                        "links": [
+                            {
+                                "ns": 0,
+                                "title": "2002 AA29"
+                            },
+                            {
+                                "ns": 0,
+                                "title": "2006 RH120"
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        */
+      if (ret.data?.query?.pages && Object.keys(ret.data?.query?.pages).length == 1) {
+        let pageId = Object.keys(ret.data?.query?.pages)[0];
+        let links = ret.data.query.pages[pageId].links;
+        if (links) result.push(...links.map(link => link.title));
+
+        if (ret.data?.continue?.plcontinue) params['plcontinue'] = ret.data.continue.plcontinue;
+        else break;
+      } else {
+        break;
+      }
+     } while (ret.data?.continue?.plcontinue);
+    return result;
+    } catch (e) {
+      console.warn(e);
+      return [];
+    }
+  }
+
 }
